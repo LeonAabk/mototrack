@@ -31,6 +31,10 @@ function updateTrackingButton(isActive) {
     btn.textContent = isActive ? 'Stopp Sporing' : 'Start Sporing';
 }
 
+function isSecureGeolocationContext() {
+    return window.isSecureContext || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+}
+
 function initApp() {
     initMap();
     loadSavedRides();
@@ -78,6 +82,14 @@ function startTracking() {
 
     if (!navigator.geolocation) {
         alert('Nettleseren din støtter ikke GPS-sporing.');
+        return;
+    }
+
+    if (!isSecureGeolocationContext()) {
+        if (statusText) {
+            statusText.innerText = 'GPS-tillatelse krever en sikker adresse. Åpne siden via HTTPS eller localhost, og prøv igjen.';
+        }
+        logEvent('GPS krever HTTPS eller localhost for å kunne spørre på telefonen.');
         return;
     }
 
