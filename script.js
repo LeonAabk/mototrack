@@ -601,6 +601,11 @@ function saveCurrentRide() {
     // Legg den nye turen øverst i listen
     rides.unshift(rideData);
 
+    // Behold maks 5 turer og slett de eldste automatisk
+    if (rides.length > 5) {
+        rides = rides.slice(0, 5);
+    }
+
     // Lagre den oppdaterte listen tilbake til localStorage
     localStorage.setItem('mc_rides', JSON.stringify(rides));
 
