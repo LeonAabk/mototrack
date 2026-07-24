@@ -9,6 +9,12 @@ let backgroundTrackingEnabled = false;
 let totalDistance = 0; // I kilometer
 let maxSpeed = 0; // I km/t
 let lastPosition = null; // Forrige GPS-koordinat
+let topSpeedPoint = null; // Hvor toppfarten ble registrert
+let speedCheckpoints = []; // Liste over fartspunkter langs ruten
+let speedCheckpointLayers = []; // Kartmarkører for fartspunkter
+let lastCheckpointTime = null;
+let speedSamples = []; // Hastighetsprøver for grafen
+const CHECKPOINT_INTERVAL_MS = 20000;
 
 // --- Kartvariabler (Leaflet) ---
 let map = null;
@@ -42,6 +48,130 @@ function initApp() {
     loadSavedRides();
     registerServiceWorker();
     attachLifecycleHandlers();
+}
+
+function renderSpeedCheckpoints() {
+    const container = document.getElementById('speed-points-list');
+    if (!container) return;
+
+    if (speedCheckpoints.length === 0) {
+        container.innerHTML = '<p style="color: #888; margin: 0;">Ingen fartspunkter registrert ennå.</p>';
+        return;
+    }
+
+    const html = speedCheckpoints.map((checkpoint) => {
+        const label = checkpoint.isTopSpeed ? '🔥 Toppfart' : '📍 Fartspunkt';
+        const time = new Date(checkpoint.timestamp).toLocaleTimeString('no-NO', { hour: '2-digit', minute: '2-digit' });
+        return `
+            <div class="speed-point-item ${checkpoint.isTopSpeed ? 'top-speed' : ''}">
+                <strong>${label}</strong><br>
+                <span>${checkpoint.speed} km/t</span><br>
+                <small>${time}</small>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = html;
+}
+
+function renderSpeedGraph() {
+    const canvas = document.getElementById('speed-graph');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = canvas.width;
+    const height = canvas.height;
+    ctx.clearRect(0, 0, width, height);
+
+    ctx.fillStyle = '#0b0b0b';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+        const y = 20 + (height - 40) * (i / 4);
+        ctx.beginPath();
+        ctx.moveTo(20, y);
+        ctx.lineTo(width - 20, y);
+        ctx.stroke();
+    }
+
+    if (speedSamples.length < 2) {
+        ctx.fillStyle = '#888';
+        ctx.font = '14px Arial';
+        ctx.fillText('Ingen hastighetsdata ennå', 20, height / 2);
+        return;
+    }
+
+    const maxSpeed = Math.max(...speedSamples, 1);
+    const minSpeed = 0;
+    const chartWidth = width - 40;
+    const chartHeight = height - 40;
+
+    ctx.strokeStyle = '#0f0';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+
+    speedSamples.forEach((sample, index) => {
+        const x = 20 + (index / (speedSamples.length - 1)) * chartWidth;
+        const y = height - 20 - ((sample - minSpeed) / (maxSpeed - minSpeed)) * chartHeight;
+        if (index === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+    });
+
+    ctx.stroke();
+
+    ctx.fillStyle = '#ff0';
+    speedSamples.forEach((sample, index) => {
+        const x = 20 + (index / (speedSamples.length - 1)) * chartWidth;
+        const y = height - 20 - ((sample - minSpeed) / (maxSpeed - minSpeed)) * chartHeight;
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fill();
+    });
+}
+
+function clearSpeedCheckpointMarkers() {
+    if (!map) return;
+
+    speedCheckpointLayers.forEach((layer) => {
+        map.removeLayer(layer);
+    });
+    speedCheckpointLayers = [];
+}
+
+function addSpeedCheckpoint(lat, lon, speed, timestamp, isTopSpeed = false) {
+    const checkpoint = {
+        lat,
+        lon,
+        speed: Math.round(speed),
+        timestamp,
+        isTopSpeed
+    };
+
+    speedCheckpoints.push(checkpoint);
+    if (speedCheckpoints.length > 20) {
+        speedCheckpoints.shift();
+    }
+
+    if (map) {
+        const marker = L.circleMarker([lat, lon], {
+            radius: isTopSpeed ? 8 : 5,
+            color: isTopSpeed ? '#ff0' : '#0ff',
+            fillColor: isTopSpeed ? '#ff0' : '#0ff',
+            fillOpacity: 0.9
+        }).addTo(map);
+
+        marker.bindPopup(`<strong>${Math.round(speed)} km/t</strong><br>${new Date(timestamp).toLocaleTimeString('no-NO', { hour: '2-digit', minute: '2-digit' })}`);
+        speedCheckpointLayers.push(marker);
+    }
+
+    renderSpeedCheckpoints();
 }
 
 function attachLifecycleHandlers() {
@@ -291,11 +421,21 @@ function handlePositionUpdate(position) {
     // Hvis coords.speed er null (ofte tilfelle når man står stille på iOS), bruk 0
     const currentSpeed = (coords.speed || 0) * 3.6;
 
+    let isNewTopSpeed = false;
+
     // Oppdater maksfart
     if (currentSpeed > maxSpeed) {
         maxSpeed = currentSpeed;
+        topSpeedPoint = { lat, lon, timestamp: Date.now() };
+        isNewTopSpeed = true;
         document.getElementById('max-speed').innerText = `Maks: ${Math.round(maxSpeed)} km/t`;
     }
+
+    speedSamples.push(currentSpeed);
+    if (speedSamples.length > 60) {
+        speedSamples.shift();
+    }
+    renderSpeedGraph();
 
     // Regn ut distanse hvis vi har en forrige posisjon
     if (lastPosition) {
@@ -311,6 +451,16 @@ function handlePositionUpdate(position) {
 
     if (coords.altitude !== null) {
         document.getElementById('altitude').innerText = Math.round(coords.altitude);
+    }
+
+    const shouldRecordCheckpoint = currentSpeed > 0 && (
+        lastCheckpointTime === null ||
+        Date.now() - lastCheckpointTime >= CHECKPOINT_INTERVAL_MS
+    );
+
+    if (shouldRecordCheckpoint) {
+        addSpeedCheckpoint(lat, lon, currentSpeed, Date.now(), isNewTopSpeed);
+        lastCheckpointTime = Date.now();
     }
 
     // Regn ut snittfart (Distanse / Tid i timer)
@@ -380,6 +530,10 @@ function resetRide() {
     totalDistance = 0;
     maxSpeed = 0;
     lastPosition = null;
+    topSpeedPoint = null;
+    speedCheckpoints = [];
+    lastCheckpointTime = null;
+    speedSamples = [];
     routeCoordinates = [];
 
     // Nullstill UI
@@ -392,12 +546,15 @@ function resetRide() {
     document.getElementById('log-output').innerText = 'Tur nullstilt.\n';
     document.getElementById('status').innerText = 'Venter på GPS-signal...';
 
-    // Fjern ruten fra kartet
+    // Fjern ruten og fartspunkter fra kartet
     if (routePolyline) routePolyline.setLatLngs([]);
     if (map && currentMarker) {
         map.removeLayer(currentMarker);
         currentMarker = null;
     }
+    clearSpeedCheckpointMarkers();
+    renderSpeedCheckpoints();
+    renderSpeedGraph();
 
     logEvent('Tur nullstilt.');
 }
@@ -430,7 +587,9 @@ function saveCurrentRide() {
         distance: totalDistance.toFixed(2),
         maxSpeed: Math.round(maxSpeed),
         duration: document.getElementById('time').innerText,
-        coordinates: routeCoordinates
+        coordinates: routeCoordinates,
+        topSpeedPoint,
+        speedCheckpoints
     };
 
     // Hent eksisterende turer fra localStorage (eller opprett tom liste hvis ingen finnes)
@@ -463,7 +622,7 @@ function loadSavedRides() {
         html += `
             <div style="background: #111; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: 1px solid #444;">
                 <strong>📅 ${ride.date}</strong><br>
-                <span>Distanse: <b>${ride.distance} km</b> | Maks: <b>${ride.maxSpeed} km/t</b> | Tid: <b>${ride.duration}</b></span><br>
+                <span>Distanse: <b>${ride.distance} km</b> | Maks: <b>${ride.maxSpeed} km/t</b> | Tid: <b>${ride.duration}</b> | Fartspunkter: <b>${(ride.speedCheckpoints || []).length}</b></span><br>
                 <button onclick="deleteRide(${ride.id})" style="padding: 5px 10px; font-size: 0.8rem; background: #600; margin-top: 5px;">Slett</button>
             </div>
         `;
