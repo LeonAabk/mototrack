@@ -81,14 +81,6 @@ function startTracking() {
         return;
     }
 
-    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-        if (statusText) {
-            statusText.innerText = 'GPS fungerer best via localhost eller HTTPS.';
-        }
-        logEvent('GPS krever en sikker nettadresse.');
-        return;
-    }
-
     isTracking = true;
     if (!startTime) startTime = Date.now();
 
@@ -105,24 +97,45 @@ function startTracking() {
     const geolocationOptions = {
         enableHighAccuracy: true,
         maximumAge: 0,
-        timeout: 15000
+        timeout: 20000
     };
 
-    navigator.geolocation.getCurrentPosition(
-        (position) => {
-            handlePositionUpdate(position);
-            watchId = navigator.geolocation.watchPosition(
-                handlePositionUpdate,
-                handlePositionError,
-                geolocationOptions
-            );
-        },
-        (error) => {
-            stopTracking({ saveRide: false });
-            handlePositionError(error);
-        },
-        geolocationOptions
-    );
+    const requestPermission = () => {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                handlePositionUpdate(position);
+                watchId = navigator.geolocation.watchPosition(
+                    handlePositionUpdate,
+                    handlePositionError,
+                    geolocationOptions
+                );
+            },
+            (error) => {
+                stopTracking({ saveRide: false });
+                handlePositionError(error);
+            },
+            geolocationOptions
+        );
+    };
+
+    if (navigator.permissions && navigator.permissions.query) {
+        navigator.permissions.query({ name: 'geolocation' }).then((permissionStatus) => {
+            if (permissionStatus.state === 'denied') {
+                stopTracking({ saveRide: false });
+                if (statusText) {
+                    statusText.innerText = 'GPS-tillatelse er blokkert. Åpne nettleserinnstillingene og tillat posisjon for denne siden.';
+                }
+                logEvent('GPS-tillatelse er blokkert i nettleseren.');
+                return;
+            }
+
+            requestPermission();
+        }).catch(() => {
+            requestPermission();
+        });
+    } else {
+        requestPermission();
+    }
 }
 
 function stopTracking(options = { saveRide: false }) {
