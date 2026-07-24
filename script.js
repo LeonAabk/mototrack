@@ -3,6 +3,8 @@ let isTracking = false;
 let watchId = null; // ID-en til GPS-lytteren
 let startTime = null;
 let timerInterval = null;
+let wakeLock = null;
+let backgroundTrackingEnabled = false;
 
 let totalDistance = 0; // I kilometer
 let maxSpeed = 0; // I km/t
@@ -38,6 +40,54 @@ function isSecureGeolocationContext() {
 function initApp() {
     initMap();
     loadSavedRides();
+    registerServiceWorker();
+    attachLifecycleHandlers();
+}
+
+function attachLifecycleHandlers() {
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pageshow', () => {
+        if (isTracking) {
+            restartPositionWatch();
+        }
+    });
+    window.addEventListener('online', () => {
+        if (isTracking) {
+            restartPositionWatch();
+        }
+    });
+}
+
+function handleVisibilityChange() {
+    if (!isTracking) return;
+
+    if (document.visibilityState === 'hidden') {
+        logEvent('Appen er i bakgrunn. Beholder sporingen aktiv så lenge nettleseren tillater det.');
+        maybeRequestWakeLock();
+    } else {
+        restartPositionWatch();
+    }
+}
+
+function maybeRequestWakeLock() {
+    if (!('wakeLock' in navigator) || wakeLock) return;
+
+    navigator.wakeLock.request('screen').then((lock) => {
+        wakeLock = lock;
+        lock.addEventListener('release', () => {
+            wakeLock = null;
+        });
+    }).catch(() => {
+        wakeLock = null;
+    });
+}
+
+function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return;
+
+    navigator.serviceWorker.register('./service-worker.js').catch(() => {
+        logEvent('Kunne ikke aktivere PWA-cache for appen.');
+    });
 }
 
 // --- Initialiser Kartet ---
@@ -94,6 +144,7 @@ function startTracking() {
     }
 
     isTracking = true;
+    backgroundTrackingEnabled = true;
     if (!startTime) startTime = Date.now();
 
     updateTrackingButton(true);
@@ -101,6 +152,11 @@ function startTracking() {
         statusText.innerText = 'Ber om tillatelse til posisjon...';
     }
     logEvent('Sporing startet. Venter på GPS...');
+
+    maybeRequestWakeLock();
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
+    }
 
     // Start tidtakeren
     clearInterval(timerInterval);
@@ -116,11 +172,7 @@ function startTracking() {
         navigator.geolocation.getCurrentPosition(
             (position) => {
                 handlePositionUpdate(position);
-                watchId = navigator.geolocation.watchPosition(
-                    handlePositionUpdate,
-                    handlePositionError,
-                    geolocationOptions
-                );
+                startPositionWatch(geolocationOptions);
             },
             (error) => {
                 stopTracking({ saveRide: false });
@@ -150,6 +202,55 @@ function startTracking() {
     }
 }
 
+function startPositionWatch(options) {
+    if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+    }
+
+    watchId = navigator.geolocation.watchPosition(
+        (position) => {
+            handlePositionUpdate(position);
+        },
+        (error) => {
+            if (!isTracking) return;
+            if (error.code === 1) {
+                handlePositionError(error);
+                return;
+            }
+            if (document.visibilityState === 'hidden') {
+                logEvent('GPS-signalet ble brutt i bakgrunn. Forsøker å hente ny posisjon snart.');
+            }
+            window.setTimeout(() => {
+                if (isTracking) {
+                    startPositionWatch(options);
+                }
+            }, 5000);
+        },
+        options
+    );
+}
+
+function restartPositionWatch() {
+    if (!isTracking) return;
+    if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+    }
+    maybeRequestWakeLock();
+    navigator.geolocation.getCurrentPosition(
+        (position) => {
+            handlePositionUpdate(position);
+            startPositionWatch({
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 20000
+            });
+        },
+        handlePositionError,
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+    );
+}
+
 function stopTracking(options = { saveRide: false }) {
     if (watchId !== null) {
         navigator.geolocation.clearWatch(watchId);
@@ -160,6 +261,7 @@ function stopTracking(options = { saveRide: false }) {
     timerInterval = null;
 
     isTracking = false;
+    backgroundTrackingEnabled = false;
     updateTrackingButton(false);
 
     const statusText = document.getElementById('status');
@@ -178,6 +280,12 @@ function handlePositionUpdate(position) {
     const coords = position.coords;
     const lat = coords.latitude;
     const lon = coords.longitude;
+
+    if ('Notification' in window && Notification.permission === 'granted' && document.visibilityState === 'hidden') {
+        new Notification('MotoTrack', {
+            body: `Oppdatert: ${Math.round((coords.speed || 0) * 3.6)} km/t`
+        });
+    }
 
     // Konverter fart fra meter per sekund (m/s) til km/t
     // Hvis coords.speed er null (ofte tilfelle når man står stille på iOS), bruk 0
