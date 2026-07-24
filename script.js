@@ -21,6 +21,9 @@ let map = null;
 let currentMarker = null;
 let routePolyline = null;
 let routeCoordinates = [];
+let rideDetailsMap = null;
+let rideDetailsPolyline = null;
+let rideDetailsMarkers = [];
 
 // --- Hjelpefunksjon: Logg hendelser til skjermen ---
 function logEvent(message) {
@@ -618,17 +621,85 @@ function loadSavedRides() {
     }
 
     let html = '';
-    rides.forEach(ride => {
+    rides.forEach((ride) => {
         html += `
-            <div style="background: #111; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: 1px solid #444;">
+            <div class="saved-ride-item" onclick="showRideDetails(${ride.id})">
                 <strong>📅 ${ride.date}</strong><br>
                 <span>Distanse: <b>${ride.distance} km</b> | Maks: <b>${ride.maxSpeed} km/t</b> | Tid: <b>${ride.duration}</b> | Fartspunkter: <b>${(ride.speedCheckpoints || []).length}</b></span><br>
-                <button onclick="deleteRide(${ride.id})" style="padding: 5px 10px; font-size: 0.8rem; background: #600; margin-top: 5px;">Slett</button>
+                <button onclick="event.stopPropagation(); deleteRide(${ride.id})" style="padding: 5px 10px; font-size: 0.8rem; background: #600; margin-top: 5px;">Slett</button>
             </div>
         `;
     });
 
     ridesContainer.innerHTML = html;
+}
+
+function showRideDetails(rideId) {
+    const rides = JSON.parse(localStorage.getItem('mc_rides')) || [];
+    const ride = rides.find((item) => item.id === rideId);
+    if (!ride) return;
+
+    const detailsPanel = document.getElementById('ride-details-panel');
+    const detailsContent = document.getElementById('ride-details-content');
+    if (!detailsPanel || !detailsContent) return;
+
+    detailsContent.innerHTML = `
+        <p><strong>Dato:</strong> ${ride.date}</p>
+        <p><strong>Distanse:</strong> ${ride.distance} km</p>
+        <p><strong>Maksfart:</strong> ${ride.maxSpeed} km/t</p>
+        <p><strong>Varighet:</strong> ${ride.duration}</p>
+        <p><strong>Toppfartspunkt:</strong> ${ride.topSpeedPoint ? `${Math.round(ride.topSpeedPoint.lat * 100000) / 100000}, ${Math.round(ride.topSpeedPoint.lon * 100000) / 100000}` : 'Ikke registrert'}</p>
+    `;
+
+    detailsPanel.style.display = 'block';
+    detailsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    initRideDetailsMap(ride);
+}
+
+function initRideDetailsMap(ride) {
+    const mapContainer = document.getElementById('ride-details-map');
+    if (!mapContainer) return;
+
+    if (rideDetailsMap) {
+        rideDetailsMap.remove();
+        rideDetailsMap = null;
+    }
+
+    rideDetailsMarkers.forEach((marker) => marker.remove());
+    rideDetailsMarkers = [];
+
+    rideDetailsMap = L.map('ride-details-map').setView([60.472, 8.468], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(rideDetailsMap);
+
+    if (ride.coordinates && ride.coordinates.length > 1) {
+        rideDetailsPolyline = L.polyline(ride.coordinates, { color: 'red', weight: 4 }).addTo(rideDetailsMap);
+        rideDetailsMap.fitBounds(rideDetailsPolyline.getBounds());
+    }
+
+    if (ride.topSpeedPoint) {
+        const topSpeedMarker = L.circleMarker([ride.topSpeedPoint.lat, ride.topSpeedPoint.lon], {
+            radius: 8,
+            color: '#ff0',
+            fillColor: '#ff0',
+            fillOpacity: 0.9
+        }).addTo(rideDetailsMap);
+        topSpeedMarker.bindPopup('Toppfart');
+        rideDetailsMarkers.push(topSpeedMarker);
+    }
+
+    (ride.speedCheckpoints || []).forEach((checkpoint) => {
+        const marker = L.circleMarker([checkpoint.lat, checkpoint.lon], {
+            radius: 5,
+            color: '#0ff',
+            fillColor: '#0ff',
+            fillOpacity: 0.9
+        }).addTo(rideDetailsMap);
+        marker.bindPopup(`${checkpoint.speed} km/t`);
+        rideDetailsMarkers.push(marker);
+    });
 }
 
 // --- Slette en enkelt tur ---
@@ -638,6 +709,8 @@ function deleteRide(id) {
         rides = rides.filter(ride => ride.id !== id);
         localStorage.setItem('mc_rides', JSON.stringify(rides));
         loadSavedRides();
+        const detailsPanel = document.getElementById('ride-details-panel');
+        if (detailsPanel) detailsPanel.style.display = 'none';
         logEvent('En tur ble slettet fra historikken.');
     }
 }
