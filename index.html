@@ -27,10 +27,23 @@
         <div class="metric-box">Tid<span id="time" class="metric-value">00:00</span></div>
         <div class="metric-box">Høyde<span id="altitude" class="metric-value">0</span> m</div>
     </div>
+
+    <div class="log">
+        <h2 style="margin-top:0; font-size: 1.2rem;">Turoppsummering</h2>
+        <div id="trip-summary-content">Ingen tur startet ennå.</div>
+    </div>
     
     <div class="button-container">
         <button id="btn-toggle" onclick="toggleTracking()">Start Sporing</button>
         <button id="btn-reset" onclick="resetRide()">Nullstill Tur</button>
+        <button id="btn-export-gpx" onclick="exportGpx()">Eksporter GPX</button>
+        <button id="btn-trip-mode" onclick="toggleTripMode()">Turmodus: Av</button>
+    </div>
+
+    <div id="trip-mode-panel" class="log" style="display:none;">
+        <h2 style="margin-top:0; font-size: 1.2rem;">Rask deling</h2>
+        <p id="trip-share-text" style="margin: 0 0 10px; color: #aaa;">Ingen tur startet ennå.</p>
+        <button onclick="copyTripSummary()">Kopier oppsummering</button>
     </div>
     
     <div id="status">Venter på GPS-signal...</div>

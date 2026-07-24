@@ -14,7 +14,23 @@ let speedCheckpoints = []; // Liste over fartspunkter langs ruten
 let speedCheckpointLayers = []; // Kartmarkører for fartspunkter
 let lastCheckpointTime = null;
 let speedSamples = []; // Hastighetsprøver for grafen
+let isPaused = false;
+let pauseStartTime = null;
+let tripSummary = {
+    maxAltitude: null,
+    minAltitude: null,
+    altitudeGain: 0,
+    lastAltitude: null
+};
+let tripModeEnabled = false;
+let pauseCount = 0;
+let pauseDurationSeconds = 0;
+let pauseActiveSince = null;
+let routeSamples = [];
 const CHECKPOINT_INTERVAL_MS = 20000;
+const PAUSE_THRESHOLD_SPEED = 5;
+const RESUME_THRESHOLD_SPEED = 8;
+const PAUSE_DELAY_MS = 10000;
 
 // --- Kartvariabler (Leaflet) ---
 let map = null;
@@ -75,6 +91,66 @@ function renderSpeedCheckpoints() {
     }).join('');
 
     container.innerHTML = html;
+}
+
+function formatDuration(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+function calculateBestSegment() {
+    if (routeSamples.length < 2) return null;
+
+    let best = null;
+
+    for (let i = 0; i < routeSamples.length - 1; i++) {
+        const start = routeSamples[i];
+        const end = routeSamples[i + 1];
+        const distanceKm = calculateDistance(start.lat, start.lon, end.lat, end.lon);
+        const durationHours = (end.timestamp - start.timestamp) / 3600000;
+        if (durationHours <= 0) continue;
+
+        const avgSpeed = distanceKm / durationHours;
+        if (!best || avgSpeed > best.speed) {
+            best = {
+                speed: avgSpeed,
+                distanceKm,
+                durationSeconds: Math.round((end.timestamp - start.timestamp) / 1000)
+            };
+        }
+    }
+
+    return best;
+}
+
+function renderTripSummary() {
+    const container = document.getElementById('trip-summary-content');
+    if (!container) return;
+
+    const stateLabel = isPaused ? 'Pauset' : 'Aktiv';
+    const altitudeMax = tripSummary.maxAltitude !== null ? `${Math.round(tripSummary.maxAltitude)} m` : '—';
+    const altitudeMin = tripSummary.minAltitude !== null ? `${Math.round(tripSummary.minAltitude)} m` : '—';
+    const altitudeGain = tripSummary.altitudeGain > 0 ? `${Math.round(tripSummary.altitudeGain)} m` : '0 m';
+    const bestSegment = calculateBestSegment();
+    const bestSegmentText = bestSegment ? `${Math.round(bestSegment.speed)} km/t` : '—';
+
+    container.innerHTML = `
+        <div class="summary-grid">
+            <div class="summary-card"><span>Status</span><strong>${stateLabel}</strong></div>
+            <div class="summary-card"><span>Topphastighet</span><strong>${maxSpeed > 0 ? `${Math.round(maxSpeed)} km/t` : '0 km/t'}</strong></div>
+            <div class="summary-card"><span>Avstand</span><strong>${totalDistance.toFixed(2)} km</strong></div>
+            <div class="summary-card"><span>Snittfart</span><strong>${document.getElementById('avg-speed').innerText} km/t</strong></div>
+            <div class="summary-card"><span>Høyeste punkt</span><strong>${altitudeMax}</strong></div>
+            <div class="summary-card"><span>Laveste punkt</span><strong>${altitudeMin}</strong></div>
+            <div class="summary-card"><span>Stigning</span><strong>${altitudeGain}</strong></div>
+            <div class="summary-card"><span>Beste del</span><strong>${bestSegmentText}</strong></div>
+            <div class="summary-card"><span>Pause-tid</span><strong>${formatDuration(pauseDurationSeconds)}</strong></div>
+            <div class="summary-card"><span>Antall pauser</span><strong>${pauseCount}</strong></div>
+            <div class="summary-card"><span>Rute punkter</span><strong>${routeCoordinates.length}</strong></div>
+            <div class="summary-card"><span>Fartspunkter</span><strong>${speedCheckpoints.length}</strong></div>
+        </div>
+    `;
 }
 
 function renderSpeedGraph() {
@@ -146,6 +222,115 @@ function clearSpeedCheckpointMarkers() {
         map.removeLayer(layer);
     });
     speedCheckpointLayers = [];
+}
+
+function toggleTripMode() {
+    tripModeEnabled = !tripModeEnabled;
+    const button = document.getElementById('btn-trip-mode');
+    const panel = document.getElementById('trip-mode-panel');
+    if (button) {
+        button.textContent = tripModeEnabled ? 'Turmodus: På' : 'Turmodus: Av';
+        button.classList.toggle('active', tripModeEnabled);
+    }
+    if (panel) {
+        panel.style.display = tripModeEnabled ? 'block' : 'none';
+    }
+    if (tripModeEnabled) {
+        updateTripShareText();
+    }
+}
+
+function updateTripShareText() {
+    const textElement = document.getElementById('trip-share-text');
+    if (!textElement) return;
+
+    const distance = totalDistance.toFixed(2);
+    const speed = maxSpeed > 0 ? Math.round(maxSpeed) : 0;
+    const duration = document.getElementById('time') ? document.getElementById('time').innerText : '00:00';
+    const bestSegment = calculateBestSegment();
+    const bestSegmentText = bestSegment ? `${Math.round(bestSegment.speed)} km/t` : '—';
+    textElement.innerText = `Tur: ${distance} km • Maks ${speed} km/t • Tid ${duration} • Beste del ${bestSegmentText} • Pauset ${formatDuration(pauseDurationSeconds)}`;
+}
+
+function copyTripSummary() {
+    const text = document.getElementById('trip-share-text')?.innerText || '';
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+        logEvent('Oppsummering kopiert til utklippstavlen.');
+    }).catch(() => {
+        logEvent('Kunne ikke kopiere oppsummering.');
+    });
+}
+
+function updateTripAltitude(altitude) {
+    if (altitude === null || altitude === undefined) return;
+
+    if (tripSummary.maxAltitude === null || altitude > tripSummary.maxAltitude) {
+        tripSummary.maxAltitude = altitude;
+    }
+
+    if (tripSummary.minAltitude === null || altitude < tripSummary.minAltitude) {
+        tripSummary.minAltitude = altitude;
+    }
+
+    if (tripSummary.lastAltitude !== null) {
+        const delta = altitude - tripSummary.lastAltitude;
+        if (delta > 0) {
+            tripSummary.altitudeGain += delta;
+        }
+    }
+
+    tripSummary.lastAltitude = altitude;
+}
+
+function handlePauseLogic(currentSpeed) {
+    if (currentSpeed >= RESUME_THRESHOLD_SPEED && isPaused) {
+        if (pauseActiveSince !== null) {
+            pauseDurationSeconds += Math.floor((Date.now() - pauseActiveSince) / 1000);
+            pauseActiveSince = null;
+        }
+        isPaused = false;
+        pauseStartTime = null;
+        logEvent('Tur fortsetter igjen etter pause.');
+        return false;
+    }
+
+    if (currentSpeed < PAUSE_THRESHOLD_SPEED) {
+        if (!isPaused) {
+            if (pauseStartTime === null) {
+                pauseStartTime = Date.now();
+            } else if (Date.now() - pauseStartTime >= PAUSE_DELAY_MS) {
+                isPaused = true;
+                pauseCount += 1;
+                pauseActiveSince = Date.now();
+                pauseStartTime = null;
+                logEvent('Tur satt på pause fordi du sto stille for lenge.');
+            }
+        }
+    } else {
+        pauseStartTime = null;
+    }
+
+    return isPaused;
+}
+
+function exportGpx() {
+    if (!routeCoordinates || routeCoordinates.length === 0) {
+        alert('Ingen rute å eksportere ennå.');
+        return;
+    }
+
+    const trackPoints = routeCoordinates.map(([lat, lon]) => `      <trkpt lat="${lat}" lon="${lon}"></trkpt>`).join('\n');
+    const gpxContent = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="MotoTrack">\n  <trk>\n    <name>Tur ${new Date().toLocaleDateString('no-NO')}</name>\n    <trkseg>\n${trackPoints}\n    </trkseg>\n  </trk>\n</gpx>`;
+
+    const blob = new Blob([gpxContent], { type: 'application/gpx+xml' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `mototrack-${Date.now()}.gpx`;
+    link.click();
+    URL.revokeObjectURL(url);
+    logEvent('GPX-fil eksportert.');
 }
 
 function addSpeedCheckpoint(lat, lon, speed, timestamp, isTopSpeed = false) {
@@ -424,6 +609,17 @@ function handlePositionUpdate(position) {
     // Hvis coords.speed er null (ofte tilfelle når man står stille på iOS), bruk 0
     const currentSpeed = (coords.speed || 0) * 3.6;
 
+    if (coords.altitude !== null) {
+        updateTripAltitude(coords.altitude);
+    }
+
+    if (handlePauseLogic(currentSpeed)) {
+        document.getElementById('speed').innerText = '0';
+        document.getElementById('status').innerText = 'Pauset - venter på bevegelse...';
+        renderTripSummary();
+        return;
+    }
+
     let isNewTopSpeed = false;
 
     // Oppdater maksfart
@@ -451,6 +647,10 @@ function handlePositionUpdate(position) {
     document.getElementById('speed').innerText = Math.round(currentSpeed);
     document.getElementById('distance').innerText = totalDistance.toFixed(2);
     document.getElementById('status').innerText = 'Får GPS-signal (Nøyaktighet: ' + Math.round(coords.accuracy) + 'm)';
+    renderTripSummary();
+    if (tripModeEnabled) {
+        updateTripShareText();
+    }
 
     if (coords.altitude !== null) {
         document.getElementById('altitude').innerText = Math.round(coords.altitude);
@@ -477,6 +677,7 @@ function handlePositionUpdate(position) {
     // --- Oppdater Kartet ---
     const currentLatLng = [lat, lon];
     routeCoordinates.push(currentLatLng);
+    routeSamples.push({ lat, lon, timestamp: Date.now() });
 
     if (routePolyline) {
         routePolyline.setLatLngs(routeCoordinates); // Tegn streken
@@ -537,6 +738,18 @@ function resetRide() {
     speedCheckpoints = [];
     lastCheckpointTime = null;
     speedSamples = [];
+    isPaused = false;
+    pauseStartTime = null;
+    pauseCount = 0;
+    pauseDurationSeconds = 0;
+    pauseActiveSince = null;
+    routeSamples = [];
+    tripSummary = {
+        maxAltitude: null,
+        minAltitude: null,
+        altitudeGain: 0,
+        lastAltitude: null
+    };
     routeCoordinates = [];
 
     // Nullstill UI
@@ -548,6 +761,7 @@ function resetRide() {
     document.getElementById('altitude').innerText = '0';
     document.getElementById('log-output').innerText = 'Tur nullstilt.\n';
     document.getElementById('status').innerText = 'Venter på GPS-signal...';
+    renderTripSummary();
 
     // Fjern ruten og fartspunkter fra kartet
     if (routePolyline) routePolyline.setLatLngs([]);
