@@ -8,7 +8,6 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Motorsykkel Speed Tracker</title>
     
-    <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <link rel="stylesheet" href="style.css">
@@ -66,6 +65,18 @@
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <div class="log">
+        <h2 style="margin-top:0; font-size: 1.2rem;">🏆 Ledertavle (Toppfart)</h2>
+        <p style="margin: 0 0 8px; color: #aaa; font-size: 0.9rem;">Fungerer uten betalt server – lagres lokalt og kan deles med en lenke.</p>
+        <div class="leaderboard-name-row">
+            <input type="text" id="leaderboard-name-input" placeholder="Ditt navn" maxlength="20">
+            <button id="btn-save-name" onclick="saveRiderName()">Lagre navn</button>
+        </div>
+        <div id="leaderboard-list">Laster ledertavle...</div>
+        <button id="btn-refresh-leaderboard" onclick="fetchLeaderboard()">Oppdater ledertavle</button>
+        <button id="btn-share-leaderboard" onclick="shareLeaderboardEntry()" style="margin-top: 8px;">Del resultat</button>
+    </div>
+
     <div class="log">
         <h2 style="margin-top:0; font-size: 1.2rem;">Lagrede Turer 📁</h2>
         <div id="saved-rides-list">Ingen lagrede turer ennå.</div>
