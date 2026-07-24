@@ -1,0 +1,94 @@
+/* Grunnleggende oppsett og Dark Mode */
+body { 
+    font-family: Arial, sans-serif; 
+    text-align: center; 
+    background: #111; 
+    color: #fff; 
+    margin: 0; 
+    padding: 20px; 
+}
+
+/* Hovedfart - Gjort ekstra stor for å være synlig i fart */
+#speed { 
+    font-size: 6rem; 
+    font-weight: bold; 
+    color: #0f0; 
+    line-height: 1;
+}
+#max-speed { 
+    font-size: 1.5rem; 
+    color: #ff0; 
+    margin-bottom: 20px;
+}
+
+/* CSS Grid: Holder orden på all telemetri i et ryddig rutenett */
+.metrics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    max-width: 500px;
+    margin: 20px auto;
+    font-size: 1.1rem;
+}
+.metric-box {
+    background: #222;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #333;
+}
+.metric-value {
+    color: #0ff; 
+    font-weight: bold;
+    font-size: 1.5rem;
+    display: block;
+    margin-top: 5px;
+}
+
+/* Store, hanske-vennlige knapper */
+.button-container {
+    margin: 20px 0;
+}
+button { 
+    padding: 20px 30px; 
+    font-size: 1.2rem; 
+    margin: 10px; 
+    font-weight: bold;
+    color: white; 
+    border: none; 
+    border-radius: 10px; 
+    cursor: pointer; 
+    touch-action: manipulation; /* Hindrer tap-zoom forsinkelser */
+}
+
+/* Farger for knapper for å skille start og stopp */
+#btn-toggle { background: #0a0; }
+#btn-toggle.active { background: #f00; }
+#btn-reset { background: #444; }
+
+/* Layout for kart og logg */
+#map { 
+    height: 350px; 
+    margin: 20px auto; 
+    width: 100%; 
+    max-width: 800px; 
+    border: 2px solid #333; 
+    border-radius: 10px;
+}
+.log { 
+    text-align: left; 
+    max-width: 600px; 
+    margin: 20px auto; 
+    background: #222;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #333;
+}
+#log-output {
+    white-space: pre-wrap; 
+    font-size: 0.9rem;
+}
+#status {
+    margin-top: 15px;
+    color: #aaa;
+    font-style: italic;
+}
