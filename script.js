@@ -32,6 +32,14 @@ const PAUSE_THRESHOLD_SPEED = 5;
 const RESUME_THRESHOLD_SPEED = 8;
 const PAUSE_DELAY_MS = 10000;
 
+// --- Batteri- og bakgrunnssporing ---
+let batteryLevel = 100;
+let isBatteryLow = false;
+let lastBatteryWarning = 0;
+let adaptiveAccuracyMode = false;
+let backgroundKeepAliveInterval = null;
+let lastWakeLockRequest = 0;
+
 // --- Kartvariabler (Leaflet) ---
 let map = null;
 let currentMarker = null;
@@ -40,6 +48,144 @@ let routeCoordinates = [];
 let rideDetailsMap = null;
 let rideDetailsPolyline = null;
 let rideDetailsMarkers = [];
+
+// --- Batteri og energioptimalisering ---
+function monitorBattery() {
+    if (!('getBattery' in navigator) && !('battery' in navigator)) {
+        // Battery API ikke støttet, skjul batteristatus
+        return;
+    }
+
+    const getBatteryPromise = navigator.getBattery?.() || 
+                             navigator.battery?.then?.((battery) => Promise.resolve(battery)) ||
+                             Promise.reject();
+
+    getBatteryPromise.then((battery) => {
+        const updateBatteryStatus = () => {
+            batteryLevel = Math.round(battery.level * 100);
+            isBatteryLow = batteryLevel <= 20;
+            
+            const batteryIndicator = document.getElementById('battery-indicator');
+            const batteryPercent = document.getElementById('battery-percent');
+            if (batteryIndicator) {
+                batteryIndicator.style.display = 'inline';
+            }
+            if (batteryPercent) {
+                batteryPercent.innerText = batteryLevel;
+                batteryPercent.style.color = batteryLevel <= 20 ? '#f44' : '#aaa';
+            }
+            
+            const statusEl = document.getElementById('status');
+            if (statusEl && batteryLevel <= 20) {
+                statusEl.style.color = '#f44';
+            }
+            
+            if (isBatteryLow && Date.now() - lastBatteryWarning > 60000) {
+                logEvent(`⚠️ Batteri lavt (${batteryLevel}%). Anbefalt: Koble til lader eller bruk batterisparer-modus.`);
+                lastBatteryWarning = Date.now();
+            }
+
+            if (isBatteryLow && !adaptiveAccuracyMode) {
+                enableAdaptiveAccuracy();
+            } else if (!isBatteryLow && adaptiveAccuracyMode && batteryLevel > 40) {
+                disableAdaptiveAccuracy();
+            }
+        };
+
+        updateBatteryStatus();
+        battery.addEventListener?.('levelchange', updateBatteryStatus);
+        battery.addEventListener?.('chargingchange', updateBatteryStatus);
+    }).catch(() => {
+        // Battery API ikke tilgjengelig
+    });
+}
+
+function enableAdaptiveAccuracy() {
+    if (adaptiveAccuracyMode) return;
+    adaptiveAccuracyMode = true;
+    logEvent('🔋 Adaptiv GPS-nøyaktighet aktivert for å spare batteri.');
+    
+    if (isTracking && watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        startPositionWatch({
+            enableHighAccuracy: false,
+            maximumAge: 3000,
+            timeout: 15000
+        });
+    }
+}
+
+function disableAdaptiveAccuracy() {
+    if (!adaptiveAccuracyMode) return;
+    adaptiveAccuracyMode = false;
+    logEvent('📡 Høy GPS-nøyaktighet gjenopprettet.');
+    
+    if (isTracking && watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        startPositionWatch({
+            enableHighAccuracy: true,
+            maximumAge: 0,
+            timeout: 20000
+        });
+    }
+}
+
+// --- Forbedret Wake Lock håndtering ---
+async function requestWakeLockWithRetry() {
+    if (!('wakeLock' in navigator)) {
+        return;
+    }
+
+    try {
+        if (wakeLock) {
+            return; // Allerede aktiv
+        }
+
+        wakeLock = await navigator.wakeLock.request('screen');
+        logEvent('📱 Skjermen holdes på for å sikre GPS-sporing.');
+        
+        wakeLock.addEventListener('release', () => {
+            wakeLock = null;
+            if (isTracking && document.visibilityState === 'visible') {
+                requestWakeLockWithRetry();
+            }
+        });
+
+        lastWakeLockRequest = Date.now();
+    } catch (err) {
+        if (err.name === 'NotAllowedError') {
+            logEvent('⚠️ Skjerm-låsen krever sikker HTTPS-forbindelse.');
+        } else if (err.name === 'NotSupportedError') {
+            logEvent('ℹ️ Nettleseren din støtter ikke skjerm-lås.');
+        }
+    }
+}
+
+// --- Bakgrunnshold for GPS under bakgrunnsmodus ---
+function startBackgroundKeepAlive() {
+    if (backgroundKeepAliveInterval) {
+        clearInterval(backgroundKeepAliveInterval);
+    }
+
+    // Hver 10. sekund under bakgrunnskjøring, forsøk å opprettholde GPS-lock
+    backgroundKeepAliveInterval = setInterval(() => {
+        if (isTracking && document.visibilityState === 'hidden') {
+            // Anmodning om nyeste posisjon (uten å avbryte watchPosition)
+            navigator.geolocation.getCurrentPosition(
+                () => {}, // Stillevoksning, data håndteres via watchPosition
+                () => {},
+                { enableHighAccuracy: !adaptiveAccuracyMode, timeout: 8000 }
+            );
+        }
+    }, 10000);
+}
+
+function stopBackgroundKeepAlive() {
+    if (backgroundKeepAliveInterval) {
+        clearInterval(backgroundKeepAliveInterval);
+        backgroundKeepAliveInterval = null;
+    }
+}
 
 // --- Hjelpefunksjon: Logg hendelser til skjermen ---
 function logEvent(message) {
@@ -67,6 +213,7 @@ function initApp() {
     loadSavedRides();
     attachLifecycleHandlers();
     initLeaderboardUI();
+    monitorBattery(); // Overvåk batteristatus
 }
 
 function renderSpeedCheckpoints() {
@@ -380,24 +527,18 @@ function handleVisibilityChange() {
     if (!isTracking) return;
 
     if (document.visibilityState === 'hidden') {
-        logEvent('Appen er i bakgrunn. Beholder sporingen aktiv så lenge nettleseren tillater det.');
-        maybeRequestWakeLock();
+        logEvent('📲 Appen går i bakgrunn. GPS-sporing fortsetter så lenge nettleseren tillater det.');
+        requestWakeLockWithRetry();
+        startBackgroundKeepAlive();
     } else {
+        logEvent('📱 Appen er synlig igjen.');
+        stopBackgroundKeepAlive();
         restartPositionWatch();
     }
 }
 
 function maybeRequestWakeLock() {
-    if (!('wakeLock' in navigator) || wakeLock) return;
-
-    navigator.wakeLock.request('screen').then((lock) => {
-        wakeLock = lock;
-        lock.addEventListener('release', () => {
-            wakeLock = null;
-        });
-    }).catch(() => {
-        wakeLock = null;
-    });
+    requestWakeLockWithRetry();
 }
 
 // --- Initialiser Kartet ---
@@ -461,9 +602,11 @@ function startTracking() {
     if (statusText) {
         statusText.innerText = 'Ber om tillatelse til posisjon...';
     }
-    logEvent('Sporing startet. Venter på GPS...');
+    logEvent('🏍️ Sporing startet. Venter på GPS...');
 
-    maybeRequestWakeLock();
+    requestWakeLockWithRetry();
+    startBackgroundKeepAlive();
+    
     if ('Notification' in window && Notification.permission === 'default') {
         Notification.requestPermission().catch(() => {});
     }
@@ -569,6 +712,7 @@ function stopTracking(options = { saveRide: false }) {
 
     clearInterval(timerInterval);
     timerInterval = null;
+    stopBackgroundKeepAlive();
 
     isTracking = false;
     backgroundTrackingEnabled = false;
@@ -577,6 +721,7 @@ function stopTracking(options = { saveRide: false }) {
     const statusText = document.getElementById('status');
     if (statusText) {
         statusText.innerText = 'Sporing stoppet.';
+        statusText.style.color = '#888';
     }
     logEvent('Sporing stoppet.');
 
