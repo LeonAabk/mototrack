@@ -9,6 +9,24 @@ body {
     line-height: 1.45;
 }
 
+@media (prefers-color-scheme: light) {
+    body {
+        background: linear-gradient(180deg, #f0f0f0 0%, #ffffff 100%);
+        color: #111111;
+    }
+    .metric-box, .log, .summary-card, .saved-ride-item, .speed-point-item, .leaderboard-item, .leaderboard-name-row input {
+        background: rgba(0,0,0,0.04) !important;
+        border-color: #cccccc !important;
+        color: #111111 !important;
+    }
+    #speed { text-shadow: none; color: #16a34a; }
+    #max-speed { color: #d97706; }
+    .metric-value { color: #0284c7; }
+    .summary-card strong, .speed-point-item strong, .leaderboard-name, .leaderboard-speed { color: #111111 !important; }
+    #speed-graph { background: #ffffff !important; border-color: #cccccc !important; }
+    #status { color: #4b5563 !important; }
+}
+
 /* Hovedfart - Gjort ekstra stor for å være synlig i fart */
 #speed { 
     font-size: 5.8rem; 
@@ -28,24 +46,24 @@ body {
 .metrics-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    gap: 16px;
     max-width: 520px;
     margin: 18px auto 22px;
-    font-size: 1rem;
+    font-size: 1.1rem;
 }
 .metric-box {
     background: rgba(255,255,255,0.04);
-    padding: 14px;
-    border-radius: 10px;
+    padding: 20px 14px;
+    border-radius: 12px;
     border: 1px solid #2a2a2a;
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
 }
 .metric-value {
     color: #38bdf8; 
     font-weight: bold;
-    font-size: 1.35rem;
+    font-size: 1.6rem;
     display: block;
-    margin-top: 4px;
+    margin-top: 6px;
 }
 
 /* Store, hanske-vennlige knapper */
@@ -54,11 +72,11 @@ body {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 10px;
+    gap: 14px;
 }
 button { 
-    padding: 14px 18px; 
-    font-size: 1rem; 
+    padding: 18px 24px;
+    font-size: 1.15rem;
     margin: 0; 
     font-weight: bold;
     color: white; 
